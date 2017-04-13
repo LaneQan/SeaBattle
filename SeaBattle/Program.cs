@@ -4,9 +4,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using VkNet;
 using VkNet.Enums.Filters;
+using VkNet.Exception;
 using VkNet.Model.RequestParams;
 
 namespace SeaBattle
@@ -14,12 +16,12 @@ namespace SeaBattle
 
     class SeaBattle
     {
+        List<char> digits = new List<char> { 'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ж', 'З', 'И', 'К' };
         VkApi vk = new VkApi();
         Random r = new Random();
         private int[,] myField = new int[10, 10];
         private int[,] opponentField = new int[10, 10];
         private int[,] shootedField = new int[10, 10];
-
         public void Auth()
         {
             Settings scope = Settings.All;
@@ -32,27 +34,61 @@ namespace SeaBattle
                     info.Add(line);
                 }
             }
-
-            vk.Authorize(new ApiAuthParams
+            string captchaKey;
+            try
             {
-                ApplicationId = Convert.ToUInt64(info[0]),
-                Login = info[1],
-                Password = info[2],
-                Settings = scope,
-            });
+                vk.Authorize(new ApiAuthParams
+                {
+                    ApplicationId = Convert.ToUInt64(info[0]),
+                    Login = info[1],
+                    Password = info[2],
+                    Settings = scope,
+                    AccessToken = info[3]
+
+                });
+            }
+            catch (CaptchaNeededException cEx)
+            {
+                Console.WriteLine(cEx.Img);
+            }
         }
         public void getMessages()
         {
-            var get = vk.Messages.Get(new MessagesGetParams
+            var longPollServer = vk.Messages.GetLongPollServer(false, true);
+            var pts = longPollServer.Pts;
+            while (true)
             {
-                Out = VkNet.Enums.MessageType.Received,
-                Count = 6
+                var ts = longPollServer.Ts;
+                var getLongPollHistory = vk.Messages.GetLongPollHistory(new MessagesGetLongPollHistoryParams
+                {
+                    Ts = ts,
+                    Pts = pts
 
-            });
-            foreach (var k in get.Messages)
-            {
-                if (k.Body.Contains("Стреляю"))
-                    Console.WriteLine(k.Body[8]+""+k.Body[9] + " and owner ID - " + k.UserId);
+                });
+                foreach (var k in getLongPollHistory.Messages)
+                {
+                    int x = 0, y = 0;
+                    if (k.Body.Contains("Стреляю"))
+                    {
+                        string msg;
+                        x = digits.IndexOf(k.Body[8]);
+                        y = (int)char.GetNumericValue(k.Body[9]);
+                        if (shootedField[x, y] != 1)
+                        {
+                            if (myField[x, y] == 1) msg = "Ранил";
+                            else msg = "Не попал";
+                        }
+                        else msg = "Ты уже сюда стрелял!";
+                        var send = vk.Messages.Send(new MessagesSendParams
+                        {
+                            UserId = k.UserId,
+                            Message = msg
+                        });
+                        shootedField[x, y] = 1;
+                    }
+                    break;
+                }
+                pts = getLongPollHistory.NewPts;
             }
         }
         private bool checkPoint(int[,] arr, int x, int y)
@@ -141,6 +177,14 @@ namespace SeaBattle
                 Console.WriteLine();
             }
             }
+
+        public void Start()
+        {
+         while (true)
+            {
+                getMessages();
+            }
+        }
     }
     class Program
     {  
@@ -150,7 +194,7 @@ namespace SeaBattle
             SeaBattle sb = new SeaBattle();
             sb.Auth(); // авторизация VK
             sb.generateMyShips();
-            sb.getMessages();
+            sb.Start();
             Console.ReadLine();
         }
     }
